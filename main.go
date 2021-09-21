@@ -1,21 +1,21 @@
 package main
 
 import (
-	"fmt"
-	"log"
-	"net/url"
-	"os"
-	"time"
-	"encoding/json"
+	"bytes"
 	"crypto/aes"
-    "crypto/cipher"
+	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"bytes"
-	"strconv"
+	"encoding/json"
+	"fmt"
+	"log"
 	"net/http"
+	"net/url"
+	"os"
+	"strconv"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/hashicorp/vault/api"
@@ -31,42 +31,41 @@ const (
 )
 
 var (
-	client *api.Client
-	jsonData []byte
+	client         *api.Client
+	jsonData       []byte
 	scrapeInterval string
-	listenPort string
-	remootioIP string
+	listenPort     string
+	remootioIP     string
 
 	doorState = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "doorStatus",
 		Help: "Current status of the garage door.",
 	})
-
 )
 
 type encryptedRequest struct {
 	Type string `json:"type"`
-	Data data `json:"data"`
-	Mac string `json:"mac"`
+	Data data   `json:"data"`
+	Mac  string `json:"mac"`
 }
 
 type data struct {
-	Iv string `json:"iv"`
+	Iv      string `json:"iv"`
 	Payload string `json:"payload"`
 }
 
 type challengeAuth struct {
-	Type string
+	Type      string
 	Challenge challenge
 }
 
 type challenge struct {
-	SessionKey string
+	SessionKey      string
 	InitialActionId int
 }
 
 type hmacObject struct {
-	Iv	string
+	Iv      string
 	Payload string
 }
 
@@ -75,13 +74,13 @@ type doorStatus struct {
 }
 
 type doorResponse struct {
-	Type string `json:"type"`
-	Id int `json:"id"`
-	Success string `json:"success"`
-	State string `json:"state"`
-	T100ms int `json:"t100ms"`
+	Type           string `json:"type"`
+	Id             int    `json:"id"`
+	Success        string `json:"success"`
+	State          string `json:"state"`
+	T100ms         int    `json:"t100ms"`
 	RelayTriggered string `json:"relayTriggered"`
-	ErrorCode string `json:"errorCode"`
+	ErrorCode      string `json:"errorCode"`
 }
 
 func init() {
@@ -92,12 +91,18 @@ func init() {
 func main() {
 	// Get env vars
 	scrapeInterval = os.Getenv("scrapeInterval")
-	if len(scrapeInterval) == 0 {scrapeInterval = "10"}
-	scrapeIntervali,_ := strconv.Atoi(scrapeInterval)
-	listenPort = ":"+os.Getenv("listenPort")
-	if len(listenPort) == 1 {listenPort = ":2112"}
+	if len(scrapeInterval) == 0 {
+		scrapeInterval = "10"
+	}
+	scrapeIntervali, _ := strconv.Atoi(scrapeInterval)
+	listenPort = ":" + os.Getenv("listenPort")
+	if len(listenPort) == 1 {
+		listenPort = ":2112"
+	}
 	remootioIP = os.Getenv("remootioIP")
-	if len(remootioIP) == 0 {remootioIP = addr}
+	if len(remootioIP) == 0 {
+		remootioIP = addr
+	}
 
 	log.SetFlags(0)
 
@@ -107,19 +112,19 @@ func main() {
 	ticker := time.NewTicker(time.Duration(scrapeIntervali) * time.Second)
 
 	go func() {
-        for {
-            select {
-            case t := <-ticker.C:
+		for {
+			select {
+			case t := <-ticker.C:
 				fmt.Println("Tick at", t)
-                handler()
-            }
-        }
-    }()
+				handler()
+			}
+		}
+	}()
 
 	// Start Prometheus server
 	fmt.Println("Starting prom server on port ", listenPort)
 	http.Handle("/metrics", promhttp.Handler())
-    http.ListenAndServe(listenPort, nil)
+	http.ListenAndServe(listenPort, nil)
 }
 
 func handler() {
@@ -133,7 +138,7 @@ func handler() {
 	}
 	defer c.Close()
 
-	authKeyHex,err := getSecret("auth_key")
+	authKeyHex, err := getSecret("auth_key")
 	if err != nil {
 		log.Fatal("Error:", err)
 	}
@@ -141,7 +146,7 @@ func handler() {
 	if err != nil {
 		log.Fatal("Error:", err)
 	}
-	secretKeyHex,err := getSecret("secret_key")
+	secretKeyHex, err := getSecret("secret_key")
 	if err != nil {
 		log.Fatal("Error:", err)
 	}
@@ -149,10 +154,10 @@ func handler() {
 	if err != nil {
 		log.Fatal("Error:", err)
 	}
-	seshKey, initId := authoriseRequest(c,secretKey)
-	result := getDoorStatus(c,secretKey,authKey,seshKey,initId)
+	seshKey, initId := authoriseRequest(c, secretKey)
+	result := getDoorStatus(c, secretKey, authKey, seshKey, initId)
 
-	switch result{
+	switch result {
 	case "open":
 		doorState.Set(1)
 	case "closed":
@@ -169,7 +174,7 @@ func readResponse(c *websocket.Conn) ([]byte, error) {
 	return message, nil
 }
 
-func pingRequest(c *websocket.Conn) ([]byte,error) {
+func pingRequest(c *websocket.Conn) ([]byte, error) {
 	err := c.WriteMessage(websocket.TextMessage, []byte("{\"type\":\"PING\"}"))
 	if err != nil {
 		log.Println("Error:", err)
@@ -178,7 +183,7 @@ func pingRequest(c *websocket.Conn) ([]byte,error) {
 	return data, err
 }
 
-func authoriseRequest(c *websocket.Conn, secretKey []byte) (string, int){
+func authoriseRequest(c *websocket.Conn, secretKey []byte) (string, int) {
 	var initOutput encryptedRequest
 
 	err := c.WriteMessage(websocket.TextMessage, []byte("{\"type\":\"AUTH\"}"))
@@ -187,9 +192,9 @@ func authoriseRequest(c *websocket.Conn, secretKey []byte) (string, int){
 	}
 	data, err := readResponse(c)
 	if err != nil {
-			log.Println("Error:", err)
+		log.Println("Error:", err)
 	}
-	
+
 	json.Unmarshal(data, &initOutput)
 	decodeIv, _ := base64.StdEncoding.DecodeString(initOutput.Data.Iv)
 	decodePayload, _ := base64.StdEncoding.DecodeString(initOutput.Data.Payload)
@@ -200,7 +205,7 @@ func authoriseRequest(c *websocket.Conn, secretKey []byte) (string, int){
 		log.Println("Error:", err)
 	}
 	var challengeOutput challengeAuth
-		
+
 	err = json.Unmarshal(data, &challengeOutput)
 	if err != nil {
 		log.Println("Error:", err)
@@ -208,7 +213,7 @@ func authoriseRequest(c *websocket.Conn, secretKey []byte) (string, int){
 
 	seshKey := challengeOutput.Challenge.SessionKey
 	initId := challengeOutput.Challenge.InitialActionId
-	
+
 	return seshKey, initId
 }
 
@@ -222,7 +227,7 @@ func aesDecrypt(key []byte, iv []byte, payload []byte) ([]byte, error) {
 	}
 
 	cbc := cipher.NewCBCDecrypter(block, iv)
-    cbc.CryptBlocks(payload, payload)
+	cbc.CryptBlocks(payload, payload)
 
 	blockSize := cbc.BlockSize()
 
@@ -241,11 +246,10 @@ func getDoorStatus(c *websocket.Conn, secretKey []byte, authKey []byte, seshKey 
 
 	var payload []byte
 
-	payload, err := aesEncryptWithSeshKey(authKey,[]byte(seshKey),[]byte(query))
+	payload, err := aesEncryptWithSeshKey(authKey, []byte(seshKey), []byte(query))
 	if err != nil {
 		log.Println("Error:", err)
 	}
-
 
 	err = c.WriteMessage(websocket.TextMessage, payload)
 	if err != nil {
@@ -254,7 +258,7 @@ func getDoorStatus(c *websocket.Conn, secretKey []byte, authKey []byte, seshKey 
 
 	data, err := readResponse(c)
 	if err != nil {
-			log.Println("Error:", err)
+		log.Println("Error:", err)
 	}
 	var output encryptedRequest
 	json.Unmarshal(data, &output)
@@ -263,7 +267,7 @@ func getDoorStatus(c *websocket.Conn, secretKey []byte, authKey []byte, seshKey 
 	decodePayload, _ := base64.StdEncoding.DecodeString(output.Data.Payload)
 	decodeSeshKey, _ := base64.StdEncoding.DecodeString(seshKey)
 
-	unencryptedData, _ := aesDecrypt(decodeSeshKey,decodeIv,decodePayload)
+	unencryptedData, _ := aesDecrypt(decodeSeshKey, decodeIv, decodePayload)
 
 	var unencryptedDataJson doorStatus
 	json.Unmarshal(unencryptedData, &unencryptedDataJson)
@@ -271,7 +275,7 @@ func getDoorStatus(c *websocket.Conn, secretKey []byte, authKey []byte, seshKey 
 	return unencryptedDataJson.Response.State
 }
 
-func aesEncryptWithSeshKey(authKey []byte, key []byte, payload []byte) ([]byte, error){
+func aesEncryptWithSeshKey(authKey []byte, key []byte, payload []byte) ([]byte, error) {
 	newKey, _ := base64.StdEncoding.DecodeString(string(key))
 	block, err := aes.NewCipher(newKey)
 	if err != nil {
@@ -293,18 +297,18 @@ func aesEncryptWithSeshKey(authKey []byte, key []byte, payload []byte) ([]byte, 
 	mode := cipher.NewCBCEncrypter(block, iv)
 	mode.CryptBlocks(paddedLoad, paddedLoad)
 
-	payloadJson,_ := json.Marshal(paddedLoad)
-	payloadJson2,_ := strconv.Unquote(string(payloadJson))
-	
+	payloadJson, _ := json.Marshal(paddedLoad)
+	payloadJson2, _ := strconv.Unquote(string(payloadJson))
+
 	payloadB64 := base64.StdEncoding.EncodeToString(paddedLoad)
 
 	// Generate HMAC
 	hmacPayload := &data{
-		Iv: ivB64,
+		Iv:      ivB64,
 		Payload: payloadJson2,
 	}
 
-	hmacPayloadJson,_ := json.Marshal(hmacPayload)
+	hmacPayloadJson, _ := json.Marshal(hmacPayload)
 
 	hmacData := hmac.New(sha256.New, authKey)
 	hmacData.Write([]byte(hmacPayloadJson))
@@ -314,7 +318,7 @@ func aesEncryptWithSeshKey(authKey []byte, key []byte, payload []byte) ([]byte, 
 	requestPayload := &encryptedRequest{
 		Type: "ENCRYPTED",
 		Data: data{
-			Iv: ivB64,
+			Iv:      ivB64,
 			Payload: payloadB64,
 		},
 		Mac: hmacHashB64,
@@ -325,8 +329,7 @@ func aesEncryptWithSeshKey(authKey []byte, key []byte, payload []byte) ([]byte, 
 
 }
 
-
-func getSecret(secretName string) (string,error) {
+func getSecret(secretName string) (string, error) {
 	conf := api.DefaultConfig()
 	client, _ = api.NewClient(conf)
 	client.SetAddress(vault_addr)
@@ -337,11 +340,11 @@ func getSecret(secretName string) (string,error) {
 	})
 	if err != nil {
 		fmt.Println(err)
-		return "",err
+		return "", err
 	}
 	if resp == nil {
 		fmt.Println("empty response from credential provider")
-		return "",err
+		return "", err
 	}
 
 	// Set client token for Vault
@@ -349,7 +352,7 @@ func getSecret(secretName string) (string,error) {
 	secret, err := client.Logical().Read("remootio/data/access")
 	if err != nil {
 		fmt.Println(err)
-		return "",err
+		return "", err
 	}
 	key, _ := secret.Data["data"].(map[string]interface{})
 	keyreturn := fmt.Sprintf("%v", key[secretName])
